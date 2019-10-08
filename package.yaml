@@ -1,0 +1,52 @@
+name:                hs-raytracer
+version:             0.1.0.0
+github:              "0not/hs-raytracer"
+license:             BSD3
+author:              "Kyle Larsen"
+maintainer:          "github.com/0not"
+copyright:           "2019 Kyle Larsen"
+
+extra-source-files:
+- README.md
+- ChangeLog.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/githubuser/hs-raytracer#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- JuicyPixels
+- simple-vec3 >= 0.6
+- random
+#- tf-random
+
+library:
+  source-dirs: src
+
+executables:
+  hs-raytracer-exe:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - hs-raytracer
+
+tests:
+  hs-raytracer-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - hs-raytracer
