@@ -6,8 +6,11 @@ import Data.Vec3
 import System.Random
 --import System.Random.TF
 --import System.Random.TF.Instances
-import Control.Monad (liftM2)
 import Data.List (head, sort)
+import GHC.Float (double2Float)
+import Debug.Trace
+
+debug = (flip trace) False
 
 type Pos        = CVec3
 type Dist       = Double
@@ -17,6 +20,7 @@ data Hit        = Hit Dist Pos Pos Material deriving (Show)
 data MaterialT  = Lambertian CVec3 | Metal CVec3 deriving (Show)
 
 data Material = Material {
+    scatter :: Ray -> Hit -> StdGen -> (CVec3, Ray, StdGen),
     matType :: MaterialT
 }
 
@@ -34,7 +38,7 @@ data World = World {
     imageSize   :: (Int, Int),
     worldShapes :: [Shape],
     camera      :: Cam
-}
+} deriving (Show)
 
 instance Show Material where
     show = show . matType
@@ -47,6 +51,35 @@ instance Ord Hit where
 
 instance Show Shape where
     show = show . originalShape
+
+instance Show Cam where
+    show x = "Camera"
+
+--
+hitMat :: Hit -> Material
+hitMat (Hit _ _ _ m) = m
+
+makeLambertian :: CVec3 -> Material
+makeLambertian albedo = 
+    let mat = Lambertian albedo
+        scatterFunc rayIn (Hit _ p n _) g = 
+            let (rnd, g') = randInUnitSphere g
+                target    = normalize (n <+> rnd)
+            in (albedo, Ray p target, g')
+    in Material { scatter = scatterFunc, matType = mat }
+
+reflect :: CVec3 -> CVec3 -> CVec3
+reflect v n = v <-> n .^ ((v .* n) * 2)
+
+-- TODO: Only scatter if dot(scattered.direction, rec.normal) > 0
+makeMetal :: CVec3 -> Material
+makeMetal albedo = 
+    let mat = Metal albedo
+        scatterFunc (Ray ro rd) (Hit _ p n _) g =
+            let reflected = reflect (normalize rd) n
+            in (albedo, Ray p reflected, g)
+        in Material { scatter = scatterFunc, matType = mat}
+
 
 makeCamera :: Pos -> Pos -> Pos -> Double -> Double -> Cam
 makeCamera orig dir up vfov aspect = 
@@ -65,8 +98,8 @@ makeCamera orig dir up vfov aspect =
     in Cam { getRay = makeRay }
             
 
-makeSphere :: Pos -> Dist -> Shape
-makeSphere center radius = Shape { intersect = sphereIntersect, originalShape = Sphere center radius }
+makeSphere :: Pos -> Dist -> Material -> Shape
+makeSphere center radius material = Shape { intersect = sphereIntersect, originalShape = Sphere center radius }
     where
         sphereIntersect (Ray rOrigin rDir) (minDist, maxDist) = if isHit then Just hit else Nothing
             where
@@ -77,13 +110,41 @@ makeSphere center radius = Shape { intersect = sphereIntersect, originalShape = 
                 t      = tca - thc
                 point  = rOrigin <+> (rDir .^ t)
                 normal = normalize (point <-> center)
-                hit    = Hit t point normal (Material $ Lambertian (CVec3 0.8 0.8 0.2))
+                hit    = Hit t point normal material
                 isHit  = tca >= 0 && d2 <= radius*radius && t >= minDist && t <= maxDist 
 
 -- | Square of Euclidean norm of a vector.
 norm2 :: (Vec3 v) => v -> Double
 norm2 v = v .* v
 {-# INLINE norm2 #-}
+
+vecToPixel :: CVec3 -> PixelRGBF
+vecToPixel (CVec3 r g b) = PixelRGBF (d2f r) (d2f g) (d2f b)
+    where d2f = double2Float
+
+
+
+randInUnitSphere :: StdGen -> (CVec3, StdGen)
+randInUnitSphere g = 
+    let bounds  = (-1, 1)
+        (x, g1) = randomR bounds g
+        (y, g2) = randomR bounds g1
+        (z, g3) = randomR bounds g2
+        v       = (CVec3 x y z) -- .^ 2 <-> CVec3 1 1 1
+        len2    = norm2 v
+    in if len2 <= 1 then (v, g3) else randInUnitSphere g3
+    
+randOnUnitSphere :: StdGen -> (CVec3, StdGen)
+randOnUnitSphere g = 
+    let bounds  = (-1, 1)
+        (x1, g1) = randomR bounds g
+        (x2, g2) = randomR bounds g1
+        x        = 2 * x1 * sqrt (1 - x1^2 - x2^2) 
+        y        = 2 * x2 * sqrt (1 - x1^2 - x2^2) 
+        z        = 1 - 2 * (x1^2 + x2^2)
+        v        = (CVec3 x y z) -- .^ 2 <-> CVec3 1 1 1
+        len2     = x1^2 + x2^2
+    in if len2 < 1 then (v, g2) else randOnUnitSphere g2
 
 mbeHead :: [Maybe a] -> Maybe a
 mbeHead []       = Nothing
@@ -104,23 +165,41 @@ intersectAllTest shapes ray dist = mbeHits
         tmpIntersect r d s = intersect s r d
         mbeHits            = map (tmpIntersect ray dist) shapes
 
+aLotOfRandTest :: StdGen -> [(Double, Double, Double)]
+aLotOfRandTest g = 
+    let (v, g') = randInUnitSphere g
+    in (toXYZ v) : aLotOfRandTest g'
+
 -- Set up the scene
-width  = 600 :: Int
-height = 400 :: Int
-c1 = CVec3 0 0 (-10)
-c2 = CVec3 2.5 0 (-10)
-c3 = CVec3 0 30 10
+width  = 300 :: Int
+height = 200 :: Int
+r1 = 1
+r2 = 1
+r3 = 1000
+r4 = 1
+c1 = CVec3 0 r1 0
+c2 = CVec3 2.5 r2 0
+c3 = CVec3 0 (-r3) 0
+c4 = CVec3 (-2.5) r4 0
+--mat1 = (makeLambertian (CVec3 0.8 0.8 0.2)) :: Material
+mat1 = (makeMetal (CVec3 0.9 0.9 0.9)) :: Material
+mat2 = (makeLambertian (CVec3 0.9 0.5 0.5)) :: Material
+mat3 = (makeLambertian (CVec3 0.1 0.9 0.1)) :: Material
+mat4 = mat1
 
 cam :: Cam
-cam = makeCamera (CVec3 0 0 0) (CVec3 0 0 (-1)) (CVec3 0 1 0) 60 ((fromIntegral width) / (fromIntegral height))
+cam = makeCamera (CVec3 0 2 10) (CVec3 0 0 (-1)) (CVec3 0 1 0) 40 ((fromIntegral width) / (fromIntegral height))
 
 world :: World
 world = World { 
     imageSize   = (width, height), 
-    worldShapes = [makeSphere c1 1, makeSphere c2 1.5],-- makeSphere c3 5], 
+    worldShapes = [makeSphere c1 r1 mat1, makeSphere c2 r2 mat2, makeSphere c3 r3 mat3, makeSphere c4 r4 mat4], 
     rndGen      = mkStdGen 1,
     camera      = cam
 }
+
+
+
 
 main :: IO ()
 main =
@@ -137,11 +216,37 @@ generateImg world = ImageRGBF (generateImage (getPixel world) w h)
 
 
 getPixel :: World -> Int -> Int -> PixelRGBF
-getPixel world x y = 
-    let (w, h) = imageSize world
-        ray    = getRay (camera world) ((fromIntegral x) / (fromIntegral w)) (1 - (fromIntegral y) / (fromIntegral h))
-        hit    = intersectAll (worldShapes world) ray (0, 10000)
-        onPix  = PixelRGBF 1.0 1.0 1.0
-        offPix = PixelRGBF 0 0 0
-    in case hit of Just h -> onPix
-                   Nothing -> offPix
+getPixel world x y
+    | x == 150 && y == 100 && debug (show x) = undefined
+    | otherwise =
+        let (w, h) = imageSize world
+            ray    = getRay (camera world) ((fromIntegral x) / (fromIntegral w)) (1 - (fromIntegral y) / (fromIntegral h))
+        in vecToPixel (getColor ray world 0)
+
+getColor :: Ray -> World -> Int -> CVec3
+getColor ray@(Ray ro rd) world depth = 
+    let maxDepth = 10 :: Int
+        g      = rndGen world
+        hit    = intersectAll (worldShapes world) ray (0.001, 10000)
+        onPix  = CVec3 0.5 0.5 0.5
+        offPix = CVec3 1.0 1.0 1.0
+        times  = Data.Vec3.zipWith (*)
+        --times (CVec3 a b c) (CVec3 x y z) = CVec3 (a*x) (b*y) (c*z)
+        doMiss = 
+            let ud = normalize rd
+                (x, y, z) = toXYZ ud
+                t = 0.5 * (y + 1.0)
+                white = CVec3 1 1 1
+                blue  = CVec3 0.5 0.7 1.0
+            in white .^ (1.0 - t) <+> blue .^ t
+        world2 w g' = w { rndGen = g' }
+        doHit (att, scat, g') = if depth < maxDepth then att `times` (getColor scat (world2 world g') (depth+1)) else CVec3 0 0 0
+        --normCols n = (n <+> CVec3 1 1 1) .^ 0.5  
+        --mat    = hitMat hit
+        --(attenuation, scattered) = scatter (hitMat hit) ray hit
+    in case hit of Just hit -> doHit (scatter (hitMat hit) ray hit g)
+                   Nothing -> doMiss
+
+-- vec3 unit_direction = unit_vector(r.direction());
+-- float t = 0.5*(unit_direction.y() + 1.0);
+-- return (1.0-t)*vec3(1.0, 1.0, 1.0) + t*vec3(0.5, 0.7, 1.0);
