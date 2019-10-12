@@ -187,8 +187,12 @@ mat2 = (makeLambertian (CVec3 0.9 0.5 0.5)) :: Material
 mat3 = (makeLambertian (CVec3 0.1 0.9 0.1)) :: Material
 mat4 = mat1
 
+camOrigin = CVec3 0 2 10
+camLookAt = CVec3 0 0 (-1)
+camUp     = CVec3 0 1 0
+
 cam :: Cam
-cam = makeCamera (CVec3 0 2 10) (CVec3 0 0 (-1)) (CVec3 0 1 0) 40 ((fromIntegral width) / (fromIntegral height))
+cam = makeCamera camOrigin camLookAt camUp 40 ((fromIntegral width) / (fromIntegral height))
 
 world :: World
 world = World { 
@@ -198,6 +202,8 @@ world = World {
     camera      = cam
 }
 
+updateRndGen :: World -> StdGen -> World
+updateRndGen w g' = w { rndGen = g' }
 
 
 
@@ -207,23 +213,36 @@ main =
     in do 
         [path] <- getArgs
         print $ (randomR bounds $ rndGen world)
-        savePngImage path (generateImg world)
+        let (imgFunc, g) = generateImg world
+        savePngImage path imgFunc
 
-generateImg :: World -> DynamicImage
-generateImg world = ImageRGBF (generateImage (getPixel world) w h)
+generateImg :: World -> (DynamicImage, StdGen)
+generateImg world = (ImageRGBF img, g')
     where
+        (world', img) = generateFoldImage getPixel world w h
+        g' = rndGen world'
         (w, h) = imageSize world
+        g = rndGen world
 
 
-getPixel :: World -> Int -> Int -> PixelRGBF
-getPixel world x y
-    | x == 150 && y == 100 && debug (show x) = undefined
-    | otherwise =
-        let (w, h) = imageSize world
-            ray    = getRay (camera world) ((fromIntegral x) / (fromIntegral w)) (1 - (fromIntegral y) / (fromIntegral h))
-        in vecToPixel (getColor ray world 0)
+getPixel :: World -> Int -> Int -> (World, PixelRGBF)
+getPixel world x y =
+    let (w, h) = imageSize world
+        ray    = getRay (camera world) ((fromIntegral x) / (fromIntegral w)) (1 - (fromIntegral y) / (fromIntegral h))
+        (col, g) = getColor ray world 0
+        newWorld = updateRndGen world g
+    in (newWorld, vecToPixel col)
 
-getColor :: Ray -> World -> Int -> CVec3
+-- getPixel :: World -> Int -> Int -> (PixelRGBF, StdGen)
+-- getPixel world x y
+--     | x == 150 && y == 100 && debug (show x) = undefined
+--     | otherwise =
+--         let (w, h) = imageSize world
+--             ray    = getRay (camera world) ((fromIntegral x) / (fromIntegral w)) (1 - (fromIntegral y) / (fromIntegral h))
+--             (col, g) = getColor ray world 0
+--         in (vecToPixel col, g)
+
+getColor :: Ray -> World -> Int -> (CVec3, StdGen)
 getColor ray@(Ray ro rd) world depth = 
     let maxDepth = 10 :: Int
         g      = rndGen world
@@ -238,9 +257,14 @@ getColor ray@(Ray ro rd) world depth =
                 t = 0.5 * (y + 1.0)
                 white = CVec3 1 1 1
                 blue  = CVec3 0.5 0.7 1.0
-            in white .^ (1.0 - t) <+> blue .^ t
-        world2 w g' = w { rndGen = g' }
-        doHit (att, scat, g') = if depth < maxDepth then att `times` (getColor scat (world2 world g') (depth+1)) else CVec3 0 0 0
+            in (white .^ (1.0 - t) <+> blue .^ t, g)
+        doHit (att, scat@(Ray so sd), g') 
+            -- | debug ((show sd) ++ " " ++ (show $ norm sd)) = undefined
+            | otherwise = 
+                if depth < maxDepth 
+                then let (col, g'') = getColor scat (updateRndGen world g') (depth+1)
+                     in (att `times` col, g'')
+                else (CVec3 0 0 0, g')
         --normCols n = (n <+> CVec3 1 1 1) .^ 0.5  
         --mat    = hitMat hit
         --(attenuation, scattered) = scatter (hitMat hit) ray hit
